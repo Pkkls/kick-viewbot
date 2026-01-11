@@ -1,4 +1,6 @@
 # kick-viewbot
+for educational purpose only
+
 fork adding multiples threads using mullvad vpn to maximize connexion - a simple dashboard to use on your main OS to randomly generate mullvad locations / restart the vm / restart the script 
 Logs monitoring
 
