@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kick Viewbot Control Center</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const Dashboard = () => {
+            const [vms, setVms] = useState([
+                { id: 1, ip: '192.168.1.101', status: 'unknown', stats: null, logs: [] },
+                { id: 2, ip: '192.168.1.84', status: 'unknown', stats: null, logs: [] },
+                { id: 3, ip: '192.168.1.4', status: 'unknown', stats: null, logs: [] },
+                { id: 4, ip: '192.168.1.11', status: 'unknown', stats: null, logs: [] },
+                { id: 5, ip: '192.168.1.182', status: 'unknown', stats: null, logs: [] }
+            ]);
+            
+            const [globalConfig, setGlobalConfig] = useState({
+                channel: '',
+                viewers: 100
+            });
+            
+            const [selectedTab, setSelectedTab] = useState('control');
+            const [selectedVm, setSelectedVm] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [message, setMessage] = useState(null);
+
+            const API_URL = 'http://192.168.1.6:5000';
+
+            const showMessage = (text, type = 'info') => {
+                setMessage({ text, type });
+                setTimeout(() => setMessage(null), 5000);
+            };
+
+            const checkVmStatus = async () => {
+                try {
+                    const response = await fetch(`${API_URL}/status`);
+                    const data = await response.json();
+                    setVms(prev => prev.map(vm => ({
+                        ...vm,
+                        status: data[vm.ip]?.status || 'offline',
+                        stats: data[vm.ip]?.stats || null
+                    })));
+                } catch (error) {
+                    console.error('Erreur check status:', error);
+                    showMessage('Erreur de connexion au serveur', 'error');
+                }
+            };
+
+            const executeAction = async (action, vmIp = null) => {
+                setLoading(true);
+                try {
+                    const payload = {
+                        action,
+                        vm_ip: vmIp,
+                        channel: globalConfig.channel,
+                        viewers: globalConfig.viewers
+                    };
+
+                    const response = await fetch(`${API_URL}/execute`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        showMessage(data.message, 'success');
+                        await checkVmStatus();
+                    } else {
+                        showMessage(data.message, 'error');
+                    }
+                } catch (error) {
+                    showMessage(`Erreur: ${error.message}`, 'error');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const deployScript = async () => {
+                if (!confirm('Déployer kick.py sur toutes les VMs ?')) return;
+                await executeAction('deploy');
+            };
+
+            const startAll = async () => {
+                if (!globalConfig.channel) {
+                    showMessage('Entre un nom de channel !', 'error');
+                    return;
+                }
+                await executeAction('start_all');
+            };
+
+            const stopAll = async () => {
+                await executeAction('stop_all');
+            };
+
+            const reconnectMullvadAll = async () => {
+                if (!confirm('Reconnecter Mullvad sur toutes les VMs ?')) return;
+                await executeAction('mullvad_reconnect_all');
+            };
+
+            const randomMullvadAll = async () => {
+                if (!confirm('Changer vers des locations aléatoires sur toutes les VMs ?')) return;
+                await executeAction('mullvad_random_all');
+            };
+
+            const getLogs = async (vmIp) => {
+                try {
+                    const response = await fetch(`${API_URL}/logs/${vmIp}`);
+                    const data = await response.json();
+                    setVms(prev => prev.map(vm => 
+                        vm.ip === vmIp ? { ...vm, logs: data.logs || [] } : vm
+                    ));
+                    setSelectedVm(vmIp);
+                    setSelectedTab('logs');
+                } catch (error) {
+                    showMessage(`Erreur logs: ${error.message}`, 'error');
+                }
+            };
+
+            useEffect(() => {
+                checkVmStatus();
+                const interval = setInterval(checkVmStatus, 10000);
+                return () => clearInterval(interval);
+            }, []);
+
+            const getStatusColor = (status) => {
+                switch(status) {
+                    case 'running': return 'bg-green-500';
+                    case 'stopped': return 'bg-red-500';
+                    case 'offline': return 'bg-gray-500';
+                    default: return 'bg-yellow-500';
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 text-white p-6">
+                    <div className="max-w-7xl mx-auto">
+                        
+                        {/* Header */}
+                        <div className="mb-8">
+                            <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+                                🎮 Kick Viewbot Control Center
+                            </h1>
+                            <p className="text-gray-400">Gestion centralisée de 5 VMs Kali Linux</p>
+                        </div>
+
+                        {/* Message notification */}
+                        {message && (
+                            <div className={`mb-4 p-4 rounded-lg ${
+                                message.type === 'success' ? 'bg-green-500/20 border border-green-500' :
+                                message.type === 'error' ? 'bg-red-500/20 border border-red-500' :
+                                'bg-blue-500/20 border border-blue-500'
+                            }`}>
+                                {message.text}
+                            </div>
+                        )}
+
+                        {/* Global Controls */}
+                        <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-6 mb-6 border border-gray-700">
+                            <h2 className="text-xl font-bold mb-4">⚙️ Configuration Globale</h2>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-2">Channel Name / URL</label>
+                                    <input
+                                        type="text"
+                                        value={globalConfig.channel}
+                                        onChange={(e) => setGlobalConfig({...globalConfig, channel: e.target.value})}
+                                        placeholder="nomduchannel ou kick.com/nomduchannel"
+                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500"
+                                    />
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-2">Nombre de viewers (par VM)</label>
+                                    <input
+                                        type="number"
+                                        value={globalConfig.viewers}
+                                        onChange={(e) => setGlobalConfig({...globalConfig, viewers: parseInt(e.target.value)})}
+                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex gap-3 flex-wrap">
+                                <button
+                                    onClick={startAll}
+                                    disabled={loading}
+                                    className="flex items-center gap-2 bg-green-600 hover:bg-green-700 px-6 py-3 rounded-lg font-semibold transition disabled:opacity-50"
+                                >
+                                    ▶️ Démarrer Toutes les VMs
+                                </button>
+                                
+                                <button
+                                    onClick={stopAll}
+                                    disabled={loading}
+                                    className="flex items-center gap-2 bg-red-600 hover:bg-red-700 px-6 py-3 rounded-lg font-semibold transition disabled:opacity-50"
+                                >
+                                    ⏹️ Arrêter Toutes les VMs
+                                </button>
+                                
+                                <button
+                                    onClick={deployScript}
+                                    disabled={loading}
+                                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-semibold transition disabled:opacity-50"
+                                >
+                                    📤 Déployer Script
+                                </button>
+
+                                <button
+                                    onClick={checkVmStatus}
+                                    disabled={loading}
+                                    className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg font-semibold transition disabled:opacity-50"
+                                >
+                                    🔄 Actualiser
+                                </button>
+                            </div>
+
+                            {/* Mullvad Controls */}
+                            <div className="mt-4 pt-4 border-t border-gray-700">
+                                <h3 className="text-sm font-semibold text-gray-400 mb-3">🔒 Contrôles Mullvad VPN</h3>
+                                <div className="flex gap-3 flex-wrap">
+                                    <button
+                                        onClick={reconnectMullvadAll}
+                                        disabled={loading}
+                                        className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg text-sm font-semibold transition disabled:opacity-50"
+                                    >
+                                        🔌 Reconnecter Mullvad (Toutes)
+                                    </button>
+                                    
+                                    <button
+                                        onClick={randomMullvadAll}
+                                        disabled={loading}
+                                        className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 px-4 py-2 rounded-lg text-sm font-semibold transition disabled:opacity-50"
+                                    >
+                                        🎲 Locations Aléatoires (Toutes)
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* VMs Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                            {vms.map(vm => (
+                                <div key={vm.id} className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-5 border border-gray-700 hover:border-purple-500 transition">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-3 h-3 rounded-full ${getStatusColor(vm.status)} animate-pulse`}></div>
+                                            <h3 className="font-bold text-lg">VM {vm.id}</h3>
+                                        </div>
+                                        {vm.status === 'running' ? (
+                                            <span className="text-green-400">📡</span>
+                                        ) : (
+                                            <span className="text-gray-500">📴</span>
+                                        )}
+                                    </div>
+
+                                    <div className="text-sm text-gray-400 mb-4">
+                                        <p>IP: {vm.ip}</p>
+                                        <p className="capitalize">Statut: {vm.status}</p>
+                                        {vm.stats && vm.stats.mullvad && (
+                                            <div className="mt-2 p-2 bg-gray-900/50 rounded border-l-2 border-orange-500">
+                                                <p className="text-xs font-semibold text-orange-400 mb-1">🔒 Mullvad</p>
+                                                <p className={vm.stats.mullvad.connected ? 'text-green-400' : 'text-red-400'}>
+                                                    {vm.stats.mullvad.connected ? '✓ Connecté' : '✗ Déconnecté'}
+                                                </p>
+                                                {vm.stats.mullvad.location && (
+                                                    <p className="text-xs">📍 {vm.stats.mullvad.location}</p>
+                                                )}
+                                            </div>
+                                        )}
+                                        {vm.stats && (vm.stats.connections || vm.stats.viewers) && (
+                                            <div className="mt-2 p-2 bg-gray-900/50 rounded">
+                                                <p>Connexions: {vm.stats.connections || 0}</p>
+                                                <p>Viewers: {vm.stats.viewers || 'N/A'}</p>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex gap-2 mb-2">
+                                        <button
+                                            onClick={() => executeAction('start', vm.ip)}
+                                            disabled={loading || vm.status === 'running'}
+                                            className="flex-1 bg-green-600/20 hover:bg-green-600 border border-green-600 px-3 py-2 rounded text-sm transition disabled:opacity-30"
+                                        >
+                                            Start
+                                        </button>
+                                        <button
+                                            onClick={() => executeAction('stop', vm.ip)}
+                                            disabled={loading || vm.status === 'stopped'}
+                                            className="flex-1 bg-red-600/20 hover:bg-red-600 border border-red-600 px-3 py-2 rounded text-sm transition disabled:opacity-30"
+                                        >
+                                            Stop
+                                        </button>
+                                        <button
+                                            onClick={() => getLogs(vm.ip)}
+                                            disabled={loading}
+                                            className="bg-purple-600/20 hover:bg-purple-600 border border-purple-600 px-3 py-2 rounded text-sm transition"
+                                        >
+                                            📝
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => executeAction('mullvad_reconnect', vm.ip)}
+                                            disabled={loading}
+                                            className="flex-1 bg-orange-600/20 hover:bg-orange-600 border border-orange-600 px-2 py-1 rounded text-xs transition"
+                                            title="Reconnecter Mullvad"
+                                        >
+                                            🔌 VPN
+                                        </button>
+                                        <button
+                                            onClick={() => executeAction('mullvad_random', vm.ip)}
+                                            disabled={loading}
+                                            className="flex-1 bg-teal-600/20 hover:bg-teal-600 border border-teal-600 px-2 py-1 rounded text-xs transition"
+                                            title="Location aléatoire"
+                                        >
+                                            🎲 Random
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Logs Panel */}
+                        {selectedTab === 'logs' && selectedVm && (
+                            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-6 border border-gray-700">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h2 className="text-xl font-bold flex items-center gap-2">
+                                        💻 Logs - {selectedVm}
+                                    </h2>
+                                    <button
+                                        onClick={() => setSelectedTab('control')}
+                                        className="text-gray-400 hover:text-white"
+                                    >
+                                        ✖️ Fermer
+                                    </button>
+                                </div>
+                                <div className="bg-black/50 rounded-lg p-4 font-mono text-sm max-h-96 overflow-y-auto">
+                                    {vms.find(v => v.ip === selectedVm)?.logs.length > 0 ? (
+                                        vms.find(v => v.ip === selectedVm).logs.map((log, i) => (
+                                            <div key={i} className="text-green-400">{log}</div>
+                                        ))
+                                    ) : (
+                                        <div className="text-gray-500">Aucun log disponible</div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Stats Summary */}
+                        <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-6 border border-gray-700">
+                            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                                📊 Statistiques Globales
+                            </h2>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="bg-gray-900/50 rounded-lg p-4">
+                                    <p className="text-gray-400 text-sm">VMs Actives</p>
+                                    <p className="text-3xl font-bold text-green-400">
+                                        {vms.filter(v => v.status === 'running').length}/5
+                                    </p>
+                                </div>
+                                <div className="bg-gray-900/50 rounded-lg p-4">
+                                    <p className="text-gray-400 text-sm">Total Connexions</p>
+                                    <p className="text-3xl font-bold text-blue-400">
+                                        {vms.reduce((acc, v) => acc + (v.stats?.connections || 0), 0)}
+                                    </p>
+                                </div>
+                                <div className="bg-gray-900/50 rounded-lg p-4">
+                                    <p className="text-gray-400 text-sm">Total Viewers</p>
+                                    <p className="text-3xl font-bold text-purple-400">
+                                        {vms.reduce((acc, v) => acc + (v.stats?.viewers || 0), 0)}
+                                    </p>
+                                </div>
+                                <div className="bg-gray-900/50 rounded-lg p-4">
+                                    <p className="text-gray-400 text-sm">VMs Offline</p>
+                                    <p className="text-3xl font-bold text-red-400">
+                                        {vms.filter(v => v.status === 'offline').length}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<Dashboard />, document.getElementById('root'));
+    </script>
+</body>
+</html>
